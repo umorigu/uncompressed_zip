@@ -58,32 +58,39 @@ var window = this;
 
             var f = fso.GetFile(rpath);
             var size = f.Size;
-            var ba = convertBinaryBlockToByteArray(allBytes, size);
             
             var dt = new Date(f.DateLastModified);
-            return this.addMember(new StringMember(ba, name, dt));
+            return this.addMember(new StringMember(allBytes, size, name, dt));
         },
-        getByteArray: function () {
+        getBlockArray: function () {
+            var blockArray = [];
             var members = this.members;
-            var bin = new ByteArray;
             var push = Array.prototype.push;
             var offsets = [];
 
+            var curpos = 0;
             for (var i = 0; i < members.length; i++) {
-                offsets.push(bin.length);
-                push.apply(bin, members[i].getLocalFileHeader());
+                offsets.push(curpos);
+                var ba = members[i].getLocalFileHeader();
+                blockArray.push({"byte_array" : ba });
+                curpos += ba.length;
 
                 // file body
-                push.apply(bin, members[i].getData());
+                blockArray.push( {
+                        "binary_block" : members[i].getData(),
+                        "binary_size" : members[i].dataLength }
+                    );
+                curpos += members[i].dataLength;
             }
 
-            var centralDirectoryOffset = bin.length;
+            var bin = new ByteArray;
+            var centralDirectoryOffset = curpos;
 
             for (var i = 0; i < members.length; i++) {
                 push.apply(bin, members[i].getCentralDirectoryFileHeader(offsets[i]));
             }
 
-            var endOfCentralDirectoryOffset = bin.length;
+            var endOfCentralDirectoryOffset = bin.length + centralDirectoryOffset;
 
 //          end of central dir signature    4 bytes  (0x06054b50)
             bin.append(0x06054b50, 4);
@@ -108,23 +115,31 @@ var window = this;
             bin.append(0, 2);
 //          .ZIP file comment       (variable size)
 //          Array.prototype.push.apply(bin, []);
-            return bin;
-        },
-        saveFile: function (filename, progressFunc) {
-            var data = this.getByteArray();
 
-            var str = new ActiveXObject("System.IO.MemoryStream");
-            for (var i = 0; i < data.length; i++) {
-                str.WriteByte(data[i]);
-                if (progressFunc) {
-                    progressFunc(i);
-                }
-            }
+            blockArray.push({"byte_array" : bin });
+
+            return blockArray;
+        },
+        saveFile: function (filename) {
+            var blockArray = this.getBlockArray();
             var stream = new ActiveXObject('ADODB.Stream');
             stream.Type = adTypeBinary;
             stream.Open();
-            var bin = str.ToArray();
-            stream.Write(bin);
+
+            for (var i = 0; i < blockArray.length; i++) {
+                var block = blockArray[i];
+                var byteArray = block["byte_array"];
+                if (byteArray) {
+                    var ms = new ActiveXObject("System.IO.MemoryStream");
+                    for (var j = 0; j < byteArray.length; j++) {
+                        ms.WriteByte(byteArray[j]);
+                    }
+                    stream.Write(ms.ToArray());
+                } else {
+                    var bin = block["binary_block"];
+                    stream.Write(bin);
+                }
+            }
             stream.SaveToFile(filename, adSaveCreateOverWrite);
             stream.Close();
         },
@@ -199,9 +214,9 @@ var window = this;
 //          crc-32                          4 bytes
             bin.append(this.crc32, 4);
 //          compressed size                 4 bytes
-            bin.append(this.data.length, 4);
+            bin.append(this.dataLength, 4);
 //          uncompressed size               4 bytes
-            bin.append(this.data.length, 4);
+            bin.append(this.dataLength, 4);
 //          file name length                2 bytes
             bin.append(this.name.length, 2);
 //          extra field length              2 bytes
@@ -238,9 +253,9 @@ var window = this;
 //          crc-32                          4 bytes
             bin.append(this.crc32, 4);
 //          compressed size                 4 bytes
-            bin.append(this.data.length, 4);
+            bin.append(this.dataLength, 4);
 //          uncompressed size               4 bytes
-            bin.append(this.data.length, 4);
+            bin.append(this.dataLength, 4);
 //          file name length                2 bytes
             bin.append(this.name.length, 2);
 //          extra field length              2 bytes
@@ -288,10 +303,11 @@ var window = this;
         this.magic = magic;
     }
 
-    function StringMember(string, name, date) {
+    function StringMember(binaryBlock, dataLength, name, date) {
         this.name = convertUTF16StringToByteArray(name);
-        this.data = string;
-        this.crc32 = getCrc32(this.data);
+        this.data = binaryBlock;
+        this.dataLength = dataLength;
+        this.crc32 = getCrc32(convertBinaryBlockToByteArray(binaryBlock, dataLength));
         this.externalFileAttributes = 0100644 << 16;
         this.initDateTime(new Date);
         this.date = ((date.getFullYear() - 1980) << 9) |
@@ -344,14 +360,6 @@ var window = this;
     Listing(folder);
     WScript.StdOut.WriteLine();
 
-    var progressFunc = function(bytes) {
-        if (bytes % 1024 == 0) {
-            WScript.StdOut.Write("\rWrite ... " + (bytes / 1024) + " KB");
-        }
-    }
-    // progressFunc = null;
-
-    zip.saveFile(archiveFilePath, progressFunc);
-    WScript.StdOut.Write("\r                                   \r");
+    zip.saveFile(archiveFilePath);
     WScript.StdOut.WriteLine("Everything Ok");
 })();
