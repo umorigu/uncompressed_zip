@@ -335,7 +335,7 @@ var window = this;
             var f = fc.item();
             var rPath = f.Path.substr(rootFolder.Path.length + 1);
             zip.addFile(rPath);
-            WScript.StdOut.WriteLine("Cmpressing  " + rPath);
+            WScript.StdOut.WriteLine("Compressing  " + rPath);
         }
         for (var fc = new Enumerator(folder.SubFolders); !fc.atEnd(); fc.moveNext()) {
             Listing(fc.item());
